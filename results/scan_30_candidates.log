@@ -1,0 +1,41 @@
+nohup: ignoring input
+[+] Candidatos: ['CVE-2017-16615', 'CVE-2017-16618', 'CVE-2018-7753', 'CVE-2019-1010017', 'CVE-2019-10800', 'CVE-2020-6802', 'CVE-2021-23980', 'CVE-2021-28363', 'CVE-2021-32839', 'CVE-2022-24065', 'CVE-2022-24439', 'CVE-2022-2888', 'CVE-2022-29217', 'CVE-2022-3102', 'CVE-2023-23934', 'CVE-2023-25577', 'CVE-2023-26145', 'CVE-2023-26302', 'CVE-2023-29483', 'CVE-2023-30608', 'CVE-2023-32303', 'CVE-2023-32309', 'CVE-2023-32681', 'CVE-2023-34457', 'CVE-2023-36830', 'CVE-2023-37271', 'CVE-2023-41039', 'CVE-2023-41040', 'CVE-2023-46446', 'CVE-2023-47163']
+$ /home/ec2-user/networks-llm-security-repair/venv/bin/python3 scripts/vul4py.py --workspace-root workspaces scan --jobs 2 --only CVE-2017-16615,CVE-2017-16618,CVE-2018-7753,CVE-2019-1010017,CVE-2019-10800,CVE-2020-6802,CVE-2021-23980,CVE-2021-28363,CVE-2021-32839,CVE-2022-24065,CVE-2022-24439,CVE-2022-2888,CVE-2022-29217,CVE-2022-3102,CVE-2023-23934,CVE-2023-25577,CVE-2023-26145,CVE-2023-26302,CVE-2023-29483,CVE-2023-30608,CVE-2023-32303,CVE-2023-32309,CVE-2023-32681,CVE-2023-34457,CVE-2023-36830,CVE-2023-37271,CVE-2023-41039,CVE-2023-41040,CVE-2023-46446,CVE-2023-47163
+[+] Scanning all CVEs under /home/ec2-user/networks-llm-security-repair/vul4py/workspaces with 2 workers (timeout 3600s/CVE)
+[+] Tools root: /home/ec2-user/networks-llm-security-repair/vul4py/workspaces/.vul4py_tools
+[+] Prewarming compiler env + python interpreters: ['3.11']
+Scanning CVEs:   0%|          | 0/30 [00:00<?, ?it/s]Scanning CVEs:   3%|▎         | 1/30 [00:49<23:46, 49.18s/it]Scanning CVEs:  10%|█         | 3/30 [01:24<11:42, 26.00s/it]Scanning CVEs:  13%|█▎        | 4/30 [01:31<08:17, 19.12s/it]Scanning CVEs:  17%|█▋        | 5/30 [02:09<10:35, 25.40s/it]Scanning CVEs:  20%|██        | 6/30 [02:16<07:48, 19.53s/it]Scanning CVEs:  23%|██▎       | 7/30 [02:53<09:39, 25.21s/it]Scanning CVEs:  27%|██▋       | 8/30 [02:57<06:45, 18.43s/it]Scanning CVEs:  30%|███       | 9/30 [03:41<09:12, 26.29s/it]Scanning CVEs:  33%|███▎      | 10/30 [03:41<06:06, 18.31s/it]Scanning CVEs:  37%|███▋      | 11/30 [04:21<07:52, 24.86s/it]Scanning CVEs:  43%|████▎     | 13/30 [04:52<05:49, 20.56s/it]Scanning CVEs:  47%|████▋     | 14/30 [05:19<05:56, 22.28s/it]Scanning CVEs:  50%|█████     | 15/30 [05:32<04:55, 19.70s/it]Scanning CVEs:  53%|█████▎    | 16/30 [06:00<05:06, 21.89s/it]Scanning CVEs:  57%|█████▋    | 17/30 [06:11<04:07, 19.04s/it]Scanning CVEs:  60%|██████    | 18/30 [06:39<04:17, 21.43s/it]Scanning CVEs:  63%|██████▎   | 19/30 [06:59<03:51, 21.07s/it]Scanning CVEs:  67%|██████▋   | 20/30 [07:22<03:37, 21.74s/it]Scanning CVEs:  70%|███████   | 21/30 [07:45<03:18, 22.00s/it]Scanning CVEs:  73%|███████▎  | 22/30 [08:13<03:10, 23.77s/it]Scanning CVEs:  77%|███████▋  | 23/30 [09:34<04:46, 40.91s/it]Scanning CVEs:  87%|████████▋ | 26/30 [10:09<01:37, 24.42s/it]Scanning CVEs:  90%|█████████ | 27/30 [10:16<01:02, 20.89s/it]Scanning CVEs:  93%|█████████▎| 28/30 [10:50<00:47, 23.74s/it]Scanning CVEs:  97%|█████████▋| 29/30 [20:02<02:35, 155.09s/it]Scanning CVEs: 100%|██████████| 30/30 [20:02<00:00, 40.09s/it] 
+[+] Scan complete. Report written to /home/ec2-user/networks-llm-security-repair/vul4py/workspaces/scan_report.tsv
+    pfes columns are passed/failed/errored/skipped per run; '-' means junit was not produced (rc-based fallback in effect).
+- CVE-2017-16615: NON_ORACLE — excluido del cálculo de VRR/FAR
+- CVE-2017-16618: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2018-7753: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2019-1010017: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2019-10800: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2020-6802: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2021-23980: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2021-28363: INFRA_BROKEN — excluido del cálculo de VRR/FAR
+- CVE-2021-32839: OK (seleccionado)
+- CVE-2022-24065: INFRA_BROKEN — excluido del cálculo de VRR/FAR
+- CVE-2022-24439: INFRA_BROKEN — excluido del cálculo de VRR/FAR
+- CVE-2022-2888: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2022-29217: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2022-3102: OK (seleccionado)
+- CVE-2023-23934: INFRA_BROKEN — excluido del cálculo de VRR/FAR
+- CVE-2023-25577: INFRA_BROKEN — excluido del cálculo de VRR/FAR
+- CVE-2023-26145: INFRA_BROKEN — excluido del cálculo de VRR/FAR
+- CVE-2023-26302: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2023-29483: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2023-30608: OK (seleccionado)
+- CVE-2023-32303: INFRA_BROKEN — excluido del cálculo de VRR/FAR
+- CVE-2023-32309: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2023-32681: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2023-34457: INFRA_BROKEN — excluido del cálculo de VRR/FAR
+- CVE-2023-36830: INFRA_BROKEN — excluido del cálculo de VRR/FAR
+- CVE-2023-37271: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2023-41039: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2023-41040: INFRA_BROKEN — excluido del cálculo de VRR/FAR
+- CVE-2023-46446: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2023-47163: OK (seleccionado)
+[+] 4 casos OK escritos en /home/ec2-user/networks-llm-security-repair/results/cases.txt
+[!] Solo 4/5 casos OK. Prueba con --candidates mayor.

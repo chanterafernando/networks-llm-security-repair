@@ -166,3 +166,28 @@ la versión de TLS, el certificado y el código HTTP que se obtiene sin API key 
 
 Experimento defensivo: solo usa el benchmark Vul4Py en EC2; no se despliegan aplicaciones vulnerables ni se ataca a
 sistemas externos. La API key solo vive en una variable de entorno y `.env` está en `.gitignore`.
+
+## Estado de la entrega del MVP (5 de octubre de 2026)
+
+| Componente | Estado |
+|---|---|
+| Pipeline (repair.py, verify.py, metrics.py) | Implementado y probado |
+| Conectividad de red | OK: DNS, TCP, TLS 1.3, HTTP (ver `results/network_probe.json`) |
+| API de OpenAI (`gpt-6-luna`) | Bloqueada: **HTTP 429 `insufficient_quota`**, la cuenta no tiene créditos (ver `results/api_status.txt`) |
+| Vul4Py | 4 casos `OK` de 30 candidatos validados (ver `results/case_status.md`) |
+| VRR / FAR | Pendientes: no hay respuestas del LLM todavía. No se fabricó ningún resultado |
+
+**Casos seleccionados:** CVE-2021-32839, CVE-2022-3102, CVE-2023-30608, CVE-2023-47163.
+
+**Scan de 30 candidatos:** 4 OK, 15 UNEXPECTED, 10 INFRA_BROKEN, 1 NON_ORACLE
+(log completo en `results/scan_30_candidates.log`).
+
+**Problema de entorno resuelto:** con un `setuptools` reciente, los proyectos antiguos no encontraban
+`pkg_resources` y el scan marcaba `UNEXPECTED`. Se fijó `setuptools<81` mediante
+`PIP_CONSTRAINT=env/constraints.txt`, sin modificar Vul4Py.
+
+**Casos excluidos legítimamente:** por ejemplo, CVE-2018-7753 (bleach) falla 2 tests incluso en `fixed/`
+porque Python 3.11 cambió cómo `urllib.parse` interpreta `localhost:8000`. El oráculo no es confiable
+en este entorno, así que no se usa para VRR/FAR.
+
+**Siguiente paso:** cuando haya créditos en la API, ejecutar `./run_all.sh`.
