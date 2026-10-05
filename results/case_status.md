@@ -1,0 +1,32 @@
+# Estado de los casos Vul4Py
+
+- CVE-2017-16615: NON_ORACLE — excluido del cálculo de VRR/FAR
+- CVE-2017-16618: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2018-7753: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2019-1010017: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2019-10800: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2020-6802: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2021-23980: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2021-28363: INFRA_BROKEN — excluido del cálculo de VRR/FAR
+- CVE-2021-32839: OK (seleccionado)
+- CVE-2022-24065: INFRA_BROKEN — excluido del cálculo de VRR/FAR
+- CVE-2022-24439: INFRA_BROKEN — excluido del cálculo de VRR/FAR
+- CVE-2022-2888: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2022-29217: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2022-3102: OK (seleccionado)
+- CVE-2023-23934: INFRA_BROKEN — excluido del cálculo de VRR/FAR
+- CVE-2023-25577: INFRA_BROKEN — excluido del cálculo de VRR/FAR
+- CVE-2023-26145: INFRA_BROKEN — excluido del cálculo de VRR/FAR
+- CVE-2023-26302: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2023-29483: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2023-30608: OK (seleccionado)
+- CVE-2023-32303: INFRA_BROKEN — excluido del cálculo de VRR/FAR
+- CVE-2023-32309: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2023-32681: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2023-34457: INFRA_BROKEN — excluido del cálculo de VRR/FAR
+- CVE-2023-36830: INFRA_BROKEN — excluido del cálculo de VRR/FAR
+- CVE-2023-37271: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2023-41039: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2023-41040: INFRA_BROKEN — excluido del cálculo de VRR/FAR
+- CVE-2023-46446: UNEXPECTED — excluido del cálculo de VRR/FAR
+- CVE-2023-47163: OK (seleccionado)

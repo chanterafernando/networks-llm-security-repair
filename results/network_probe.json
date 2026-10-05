@@ -1,0 +1,28 @@
+{
+  "host": "api.openai.com",
+  "port": 443,
+  "timestamp": "2026-10-05T18:57:53.283871+00:00",
+  "dns_ms": 6.6,
+  "dns_addresses": [
+    "162.159.140.245",
+    "172.66.0.243",
+    "2606:4700:7::f3",
+    "2a06:98c1:58::f3"
+  ],
+  "tcp_connect_ms": 1.25,
+  "connected_ip": "162.159.140.245",
+  "tls_handshake_ms": 4.01,
+  "tls_version": "TLSv1.3",
+  "tls_cipher": "TLS_AES_256_GCM_SHA384",
+  "cert_subject": {
+    "commonName": "api.openai.com"
+  },
+  "cert_issuer": {
+    "countryName": "US",
+    "organizationName": "Google Trust Services",
+    "commonName": "WE1"
+  },
+  "cert_not_after": "Dec  4 03:28:32 2026 GMT",
+  "http_ttfb_ms": 120.81,
+  "http_status_line": "HTTP/1.1 401 Unauthorized"
+}
