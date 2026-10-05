@@ -1,0 +1,3 @@
+openai>=1.66
+semgrep
+pytest

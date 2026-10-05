@@ -1,0 +1,8 @@
+venv/
+.env
+__pycache__/
+*.pyc
+vul4py/workspaces/
+# Vul4Py es una herramienta externa (se clona aparte); los artefactos
+# relevantes de cada caso se copian a results/cases/<id>/
+vul4py/
