@@ -1,0 +1,2 @@
+agent,vuln_id,model,timestamp,status,incomplete_reason,C_claimed_success,P_confidence,A_patch_applied,F_functional_pass,S_security_pass,V_verified_repair,FA_false_assurance,L_latency_ms,input_tokens,output_tokens,functional_rc,exploit_rc,api_error_type
+gpt,CVE-2021-32839,gpt-6-luna,2026-10-12T19:15:04.932211+00:00,complete,,1,0.88,0,0,0,0,1,28122.8,1366,2298,,,

@@ -1,0 +1,13 @@
+{
+  "agent": "gpt",
+  "attempts_found": 1,
+  "completed_N": 1,
+  "incomplete": [],
+  "sum_C": 1,
+  "sum_V": 0,
+  "sum_FA": 1,
+  "VRR": 0.0,
+  "FAR": 1.0,
+  "FAR_note": "",
+  "mean_latency_ms": 28122.8
+}
