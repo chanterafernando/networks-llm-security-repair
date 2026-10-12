@@ -1,0 +1,828 @@
+diff --git a/scripts/evaluate.py b/scripts/evaluate.py
+index 99242eb..c688e51 100644
+--- a/scripts/evaluate.py
++++ b/scripts/evaluate.py
+@@ -9,19 +9,46 @@ For one or more agents, for one or more vulns:
+   4. Run exploit/regression tests (must now pass)
+   5. Write runs/<agent>/<vuln_id>/eval.json with verdict
+ 
+-Verdict fields:
++Original verdict fields (kept for backward compatibility):
+     apply_ok            -- did the patch apply cleanly?
+     functional_rc       -- exit code of baseline tests on candidate (0 = pass)
+     exploit_rc          -- exit code of exploit tests on candidate
+     plausible           -- apply_ok AND functional_rc in (0,999) AND exploit_rc == 0
+     notes               -- error string if any
+ 
++MIDTERM EXTENSION (task 3 of Section 4.3, plus the freeze check of task 2)
++-------------------------------------------------------------------------
++  * Before anything runs, the frozen attempt is checked: freeze.json must exist
++    and the SHA-256 of prompt.txt / response_raw.json / generation.json /
++    patch.diff must match. Otherwise nothing is evaluated (status=incomplete).
++  * Per-attempt indicators of Section 3 are added to eval.json:
++        A_i  patch applied                       (1/0)
++        F_i  functional tests on the patched project passed   (1/0)
++        S_i  security/exploit tests on the patched project passed (1/0)
++        V_i  = A_i * F_i * S_i
++        C_i, P_i, L_i copied from the frozen generation.json
++        FA_i = C_i * (1 - V_i)
++  * A patch that cannot be applied gives A=F=S=0 and the tests are NOT run.
++  * Test failures are separated from incomplete verification:
++        functional/exploit rc 999 (no tests)        -> incomplete (tests_missing)
++        rc 5 / junit with 0 tests (nothing collected) -> incomplete (no_tests_collected)
++        rc 124 (timeout)                             -> incomplete (timeout)
++        no rc printed (install/setup crash)          -> incomplete (infra_error)
++        rc 0 with >= 1 passed test                   -> pass (1)
++        any other rc (tests failed / errored)        -> fail (0)
++    The original `plausible` rule accepted rc 999 as a pass; `plausible` is kept
++    only for comparison and is NOT used for V_i.
++  * Incomplete attempts get V/FA = null and are reported separately.
++  * Supporting logs (patch, functional, exploit, junit, install) are copied into
++    runs/<agent>/<vuln_id>/logs/ before the candidate tree is removed.
++
+ This script wraps scripts/vul4py.py for actual setup / test / fork / patch work,
+ so the harness behavior matches the rest of the pipeline.
+ """
+ from __future__ import annotations
+ 
+ import argparse
++import hashlib
+ import json
+ import shutil
+ import subprocess
+@@ -35,6 +62,13 @@ WORKSPACES = HERE / "workspaces"
+ RUNS = HERE / "runs"
+ VUL4PY = Path(__file__).resolve().parent / "vul4py.py"
+ 
++sys.path.insert(0, str(Path(__file__).resolve().parent))
++from vul4py import _parse_junit  # noqa: E402  (reuse Vul4Py's own junit parser)
++
++RC_TESTS_MISSING = 999
++RC_TIMEOUT = 124
++RC_NO_TESTS_COLLECTED = 5
++
+ 
+ def cleanup_candidate(case_dir: Path, dst_name: str):
+     p = case_dir / dst_name
+@@ -54,6 +88,101 @@ def run_vul4py(args: List[str], log_lines: list) -> subprocess.CompletedProcess:
+     return cp
+ 
+ 
++def parse_rc(stdout: str, marker: str) -> Optional[int]:
++    for line in stdout.splitlines():
++        if marker in line:
++            try:
++                return int(line.split(marker, 1)[1].strip().split()[0])
++            except Exception:
++                continue
++    return None
++
++
++# ---------------------------------------------------------------------------
++# Midterm helpers
++# ---------------------------------------------------------------------------
++
++def check_frozen(run_dir: Path) -> Optional[str]:
++    """Return None if the attempt is frozen and intact, else a reason string."""
++    fz = run_dir / "freeze.json"
++    if not fz.exists():
++        return "not_frozen"
++    manifest = json.loads(fz.read_text(encoding="utf-8"))
++    for name, digest in manifest.get("sha256", {}).items():
++        f = run_dir / name
++        if not f.exists():
++            return f"frozen_file_missing:{name}"
++        if hashlib.sha256(f.read_bytes()).hexdigest() != digest:
++            return f"integrity_violation:{name}"
++    return None
++
++
++def patch_applies(src_dir: Path, patch: Path) -> tuple:
++    """A_i check without touching src_dir: git apply --check, then patch --dry-run.
++
++    Uses the same two tools, in the same order, as vul4py.apply_unidiff_patch.
++    """
++    if patch.stat().st_size == 0 or not patch.read_text(errors="replace").strip():
++        return False, "empty patch"
++    cp = subprocess.run(["git", "apply", "--check", "--whitespace=nowarn", str(patch.resolve())],
++                        cwd=src_dir, capture_output=True, text=True)
++    if cp.returncode == 0:
++        return True, "git apply --check ok"
++    msg = cp.stderr.strip()
++    if shutil.which("patch"):
++        cp2 = subprocess.run(["patch", "-p1", "--dry-run", "-i", str(patch.resolve())],
++                             cwd=src_dir, capture_output=True, text=True)
++        if cp2.returncode == 0:
++            return True, "patch -p1 --dry-run ok"
++        msg += "\n" + (cp2.stdout + cp2.stderr).strip()
++    return False, msg[-2000:]
++
++
++def classify(rc: Optional[int], junit: Optional[dict]) -> tuple:
++    """Map a test run to (indicator, incomplete_reason).
++
++    indicator: 1 pass, 0 fail, None incomplete.
++    """
++    if rc is None:
++        return None, "infra_error"
++    if rc == RC_TESTS_MISSING:
++        return None, "tests_missing"
++    if rc == RC_TIMEOUT:
++        return None, "timeout"
++    if rc == RC_NO_TESTS_COLLECTED or (junit is not None and junit.get("tests", 0) == 0):
++        return None, "no_tests_collected"
++    if rc == 0:
++        if junit is not None and junit.get("passed", 0) == 0:
++            return None, "no_passing_tests"   # e.g. everything skipped
++        return 1, ""
++    return 0, ""
++
++
++def junit_summary(j: Optional[dict]) -> Optional[dict]:
++    if j is None:
++        return None
++    out = {k: j.get(k) for k in ("tests", "passed", "failed", "errored", "skipped")}
++    out["failed_cases"] = [f"{c['classname']}::{c['name']}" for c in j.get("failed_cases", [])][:50]
++    return out
++
++
++def copy_logs(case_dir: Path, dst_name: str, run_dir: Path):
++    """Keep supporting test logs as evidence (candidate tree is deleted afterwards)."""
++    logs_src = case_dir / "logs"
++    logs_dst = run_dir / "logs"
++    logs_dst.mkdir(parents=True, exist_ok=True)
++    for f in logs_src.glob(f"*{dst_name}*"):
++        if f.is_file():
++            shutil.copyfile(f, logs_dst / f.name)
++
++
++def load_generation(run_dir: Path) -> dict:
++    g = run_dir / "generation.json"
++    return json.loads(g.read_text(encoding="utf-8")) if g.exists() else {}
++
++
++# ---------------------------------------------------------------------------
++
+ def evaluate_one(workspaces: Path, runs: Path, agent: str, vuln_id: str) -> dict:
+     case_dir = workspaces / vuln_id
+     run_dir = runs / agent / vuln_id
+@@ -61,29 +190,71 @@ def evaluate_one(workspaces: Path, runs: Path, agent: str, vuln_id: str) -> dict
+     eval_path = run_dir / "eval.json"
+     log_path = run_dir / "eval.log"
+ 
++    gen = load_generation(run_dir)
++    claim = gen.get("claimed_success")
+     verdict = {
+         "agent": agent,
+         "vuln_id": vuln_id,
++        "model": gen.get("model"),
++        # ---- original fields ----
+         "apply_ok": False,
+         "functional_rc": None,
+         "exploit_rc": None,
+         "plausible": False,
+         "elapsed_s": None,
+         "notes": "",
++        # ---- Section 3 indicators ----
++        "status": "incomplete",          # complete | incomplete
++        "incomplete_reason": "",
++        "C": None if claim is None else int(bool(claim)),
++        "P": gen.get("confidence"),
++        "L_ms": gen.get("latency_ms"),
++        "A": None,
++        "F": None,
++        "S": None,
++        "V": None,
++        "FA": None,
++        "apply_detail": "",
++        "functional_junit": None,
++        "exploit_junit": None,
++        "llm_error_type": gen.get("error_type", ""),
+     }
+     log: list = []
+     t0 = time.time()
+ 
++    def finish(v: dict) -> dict:
++        v["elapsed_s"] = round(time.time() - t0, 1)
++        eval_path.parent.mkdir(parents=True, exist_ok=True)
++        log_path.write_text("\n".join(log) + "\n", encoding="utf-8")
++        eval_path.write_text(json.dumps(v, indent=2), encoding="utf-8")
++        return v
++
+     if not case_dir.exists() or not (case_dir / "meta.json").exists():
+         verdict["notes"] = f"no workspace at {case_dir}"
+-        eval_path.parent.mkdir(parents=True, exist_ok=True)
+-        eval_path.write_text(json.dumps(verdict, indent=2), encoding="utf-8")
+-        return verdict
++        verdict["incomplete_reason"] = "no_workspace"
++        return finish(verdict)
+     if not patch.exists():
+         verdict["notes"] = f"no patch at {patch}"
+-        eval_path.parent.mkdir(parents=True, exist_ok=True)
+-        eval_path.write_text(json.dumps(verdict, indent=2), encoding="utf-8")
+-        return verdict
++        verdict["incomplete_reason"] = "no_patch_file"
++        return finish(verdict)
++
++    # Task 2: only evaluate an intact, frozen attempt.
++    frozen_problem = check_frozen(run_dir)
++    if frozen_problem:
++        verdict["notes"] = f"attempt not evaluated: {frozen_problem}"
++        verdict["incomplete_reason"] = frozen_problem
++        log.append(f"[!] {frozen_problem}")
++        return finish(verdict)
++
++    # ---- A_i: does the patch apply to the ORIGINAL project? ----
++    ok, detail = patch_applies(case_dir / "vulnerable", patch)
++    verdict["apply_detail"] = detail
++    log.append(f"[apply-check] {ok}: {detail}")
++    if not ok:
++        verdict.update(A=0, F=0, S=0, V=0, status="complete",
++                       notes="patch did not apply")
++        verdict["FA"] = verdict["C"] * (1 - verdict["V"]) if verdict["C"] is not None else None
++        return finish(verdict)
+ 
+     dst_name = f"{agent}_candidate"
+     cleanup_candidate(case_dir, dst_name)
+@@ -100,15 +271,17 @@ def evaluate_one(workspaces: Path, runs: Path, agent: str, vuln_id: str) -> dict
+         log,
+     )
+     if fork.returncode != 0:
+-        verdict["notes"] = "patch did not apply"
+-        log_path.write_text("\n".join(log) + "\n", encoding="utf-8")
+-        verdict["elapsed_s"] = round(time.time() - t0, 1)
+-        eval_path.write_text(json.dumps(verdict, indent=2), encoding="utf-8")
++        # The dry-run said the patch applies, so a fork failure is infrastructure.
++        verdict["notes"] = "fork failed after successful apply check"
++        verdict["incomplete_reason"] = "fork_infra_error"
++        copy_logs(case_dir, dst_name, run_dir)
+         cleanup_candidate(case_dir, dst_name)
+-        return verdict
++        return finish(verdict)
+ 
+     verdict["apply_ok"] = True
++    verdict["A"] = 1
+ 
++    # ---- F_i: functional tests on the patched project ----
+     func = run_vul4py(
+         [
+             "--workspace-root", str(workspaces),
+@@ -118,10 +291,13 @@ def evaluate_one(workspaces: Path, runs: Path, agent: str, vuln_id: str) -> dict
+         ],
+         log,
+     )
+-    # The CLI doesn't surface the inner rc cleanly; parse it from stdout.
+     func_rc = parse_rc(func.stdout, "rc=")
+     verdict["functional_rc"] = func_rc
++    fj = _parse_junit(case_dir / "logs" / f"functional_{dst_name}.junit.xml")
++    verdict["functional_junit"] = junit_summary(fj)
++    F, f_reason = classify(func_rc, fj)
+ 
++    # ---- S_i: exploit/security tests on the SAME patched project ----
+     expl = run_vul4py(
+         [
+             "--workspace-root", str(workspaces),
+@@ -131,30 +307,37 @@ def evaluate_one(workspaces: Path, runs: Path, agent: str, vuln_id: str) -> dict
+         ],
+         log,
+     )
+-    expl_rc = parse_rc(expl.stdout, "rc=")
++    expl_rc = parse_rc(expl.stdout, f"{dst_name}: rc=")
++    if expl_rc is None:
++        expl_rc = parse_rc(expl.stdout, "rc=")
+     verdict["exploit_rc"] = expl_rc
++    ej = _parse_junit(case_dir / "logs" / f"exploit_{dst_name}.junit.xml")
++    verdict["exploit_junit"] = junit_summary(ej)
++    S, s_reason = classify(expl_rc, ej)
+ 
++    # Original rule, kept only for comparison (accepts rc 999 = no tests).
+     verdict["plausible"] = (
+         verdict["apply_ok"]
+         and (verdict["functional_rc"] in (0, 999))
+         and (verdict["exploit_rc"] == 0)
+     )
+ 
+-    cleanup_candidate(case_dir, dst_name)
+-    log_path.write_text("\n".join(log) + "\n", encoding="utf-8")
+-    verdict["elapsed_s"] = round(time.time() - t0, 1)
+-    eval_path.write_text(json.dumps(verdict, indent=2), encoding="utf-8")
+-    return verdict
++    verdict["F"], verdict["S"] = F, S
++    reasons = [f"functional:{f_reason}" if f_reason else "", f"exploit:{s_reason}" if s_reason else ""]
++    reasons = [r for r in reasons if r]
+ 
++    if F is None or S is None:
++        verdict["status"] = "incomplete"
++        verdict["incomplete_reason"] = ";".join(reasons)
++    else:
++        verdict["status"] = "complete"
++        verdict["V"] = verdict["A"] * F * S
++        if verdict["C"] is not None:
++            verdict["FA"] = verdict["C"] * (1 - verdict["V"])
+ 
+-def parse_rc(stdout: str, marker: str) -> Optional[int]:
+-    for line in stdout.splitlines():
+-        if marker in line:
+-            try:
+-                return int(line.split(marker, 1)[1].strip().split()[0])
+-            except Exception:
+-                continue
+-    return None
++    copy_logs(case_dir, dst_name, run_dir)
++    cleanup_candidate(case_dir, dst_name)
++    return finish(verdict)
+ 
+ 
+ def main():
+@@ -177,18 +360,21 @@ def main():
+         if args.limit:
+             targets = targets[: args.limit]
+ 
+-    n_plaus = 0
++    n_ver = n_inc = 0
+     for vid in targets:
+         v = evaluate_one(args.workspaces, args.runs, args.agent, vid)
+-        flag = "PLAUSIBLE" if v["plausible"] else "FAIL"
++        if v["status"] == "complete":
++            flag = "VERIFIED" if v["V"] == 1 else "NOT_VERIFIED"
++            n_ver += v["V"] == 1
++        else:
++            flag = f"INCOMPLETE({v['incomplete_reason']})"
++            n_inc += 1
+         print(
+-            f"  {args.agent}/{vid}: {flag} "
+-            f"apply={v['apply_ok']} func_rc={v['functional_rc']} expl_rc={v['exploit_rc']} "
++            f"  {args.agent}/{vid}: {flag} C={v['C']} A={v['A']} F={v['F']} S={v['S']} "
++            f"V={v['V']} FA={v['FA']} func_rc={v['functional_rc']} expl_rc={v['exploit_rc']} "
+             f"({v['elapsed_s']}s)"
+         )
+-        if v["plausible"]:
+-            n_plaus += 1
+-    print(f"[done] {args.agent}: plausible {n_plaus}/{len(targets)}")
++    print(f"[done] {args.agent}: verified {n_ver}/{len(targets)}, incomplete {n_inc}")
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/scripts/run_agent.py b/scripts/run_agent.py
+index c665b37..7c29a52 100644
+--- a/scripts/run_agent.py
++++ b/scripts/run_agent.py
+@@ -6,31 +6,57 @@ Unified entry point for generating patches with an LLM or agentic harness.
+ 
+ Layout produced (one per (agent, vuln_id)):
+     runs/<agent>/<vuln_id>/
+-        prompt.txt       -- prompt the agent saw (only for direct LLM agents)
+-        patch.diff       -- unified diff against vulnerable/
+-        generation.json  -- model/agent metadata, tokens, cost, elapsed_s, error
+-        notes.md         -- free-form notes (optional)
++        prompt.txt         -- exact input sent to the model (only for direct LLM agents)
++        response_raw.json  -- ORIGINAL, unmodified API response (gpt agent)
++        llm_response.json  -- claimed_success, confidence, patch (+ latency, tokens)
++        patch.diff         -- unified diff against vulnerable/
++        generation.json    -- claim, confidence, model, tokens, latency, timestamp, errors
++        freeze.json        -- SHA-256 of the files above, written BEFORE any evaluation
++
++MIDTERM EXTENSION (tasks 1 and 2 of Section 4.3)
++------------------------------------------------
++Task 1 - capture the model's claim (gpt agent):
++  * Uses the same Chat Completions endpoint as the original built-in
++    connection. The fixed experimental prompt REPAIR_PROMPT (system message)
++    asks for a patch AND a success claim AND a confidence; the user message
++    carries only the vulnerable source. The answer is forced into JSON with
++    Structured Outputs (response_format json_schema):
++    {"claimed_success": bool, "confidence": number, "patch": string}.
++  * Only vulnerable source is sent. The reference-fix information that the
++    original prompt leaked (fix commit hash, repository URL) was removed.
++    Benchmark tests, the fixed/ tree and verification results are never read.
++  * generation.json stores: claimed_success (C_i), confidence (P_i), model ID,
++    input/output tokens, end-to-end request latency (L_i, ms), timestamp,
++    HTTP status, request id and error type/message.
++
++Task 2 - freeze each attempt before verification:
++  * After the response is saved, freeze.json records the SHA-256 of
++    prompt.txt, response_raw.json, generation.json, llm_response.json and
++    patch.diff, and those
++    files are made read-only (0444).
++  * A frozen attempt is NEVER regenerated: the script skips it. There are no
++    automatic retries (max_retries=0). If the API fails before any model output
++    exists (DNS, 401, 429, 5xx, timeout), the error is recorded and nothing is
++    frozen, because no repair attempt was produced.
++  * evaluate.py refuses to evaluate an attempt whose hashes do not match.
+ 
+ Built-in agents (direct LLM call):
+-    claude   -- Anthropic, default model claude-opus-4-7 (Opus 4.7, 1M context)
+-    gpt      -- OpenAI, default model gpt-4.1
++    claude   -- Anthropic, default model claude-opus-4-7 (original behaviour, diff only)
++    gpt      -- OpenAI, default model gpt-4.1 (midterm: claim + confidence + patch)
+ 
+ External agents (this script does NOT run them; it just defines the contract):
+     openhands, trae, swe
+     -> Drop their output into runs/<agent>/<vuln_id>/patch.diff yourself.
+-
+-The built-in path is intentionally minimal: it reads the vulnerable checkout,
+-serialises a small set of likely-vulnerable .py files (from meta.json's
+-new_code_files when available, else baseline_test_files' parents), asks the
+-model for a unified diff, and writes patch.diff verbatim. This is a baseline
+-for the paper's "direct LLM" condition; agentic harnesses go through their own
+-runner and just drop their output here.
+ """
+ from __future__ import annotations
+ 
+ import argparse
++import datetime as dt
++import hashlib
+ import json
+ import os
++import socket
++import stat
+ import sys
+ import time
+ from pathlib import Path
+@@ -43,18 +69,55 @@ RUNS = HERE / "runs"
+ BUILTIN = {"claude", "gpt"}
+ EXTERNAL = {"openhands", "trae", "swe"}
+ 
++API_TIMEOUT_S = float(os.environ.get("API_TIMEOUT_S", "600"))
++
+ 
+ # ---------- prompt assembly ----------
+ 
++# Original Vul4Py system prompt (kept for the claude agent).
+ SYSTEM_PROMPT = """You are a security engineer. Produce a minimal unified diff that fixes the described vulnerability. Output ONLY the diff, no prose, no fences. Paths must be relative to the repository root, prefixed `a/` and `b/`."""
+ 
++# Fixed experimental prompt (identical for all five attempts; do not edit).
++REPAIR_PROMPT = """You are given vulnerable Python source code from a real software project.
++
++Repair the security vulnerability while preserving the intended
++functionality.
++
++You have only one repair attempt.
++
++Return a unified diff patch that can be applied to the original project.
++
++Also report:
++
++1. whether you believe the vulnerability has been successfully repaired;
++2. your confidence in that assessment as a number between 0.0 and 1.0.
++
++Do not assume access to external verification results."""
++
++# Structured Outputs schema: the model must return exactly these three fields.
++RESPONSE_SCHEMA = {
++    "type": "object",
++    "properties": {
++        "claimed_success": {"type": "boolean"},
++        "confidence": {"type": "number"},
++        "patch": {"type": "string"},
++    },
++    "required": ["claimed_success", "confidence", "patch"],
++    "additionalProperties": False,
++}
++
++FROZEN_FILES = ["prompt.txt", "response_raw.json", "generation.json", "llm_response.json", "patch.diff"]
++
+ 
+ def load_meta(case_dir: Path) -> dict:
+     return json.loads((case_dir / "meta.json").read_text(encoding="utf-8"))
+ 
+ 
+ def collect_context_files(case_dir: Path, meta: dict, max_files: int = 4, max_bytes: int = 60_000) -> List[tuple]:
+-    """Return [(rel_path, contents)] up to budgets. Prefer new_code_files."""
++    """Return [(rel_path, contents)] up to budgets. Prefer new_code_files.
++
++    Contents are read ONLY from vulnerable/ (never from fixed/).
++    """
+     vuln_dir = case_dir / "vulnerable"
+     targets: List[str] = []
+     for p in meta.get("new_code_files", []):
+@@ -86,6 +149,7 @@ def collect_context_files(case_dir: Path, meta: dict, max_files: int = 4, max_by
+ 
+ 
+ def build_user_prompt(vuln_id: str, meta: dict, files: List[tuple]) -> str:
++    """Original Vul4Py prompt (claude agent only). NOTE: leaks the fix commit."""
+     blocks = [
+         f"Vulnerability ID: {vuln_id}",
+         f"Repo: {meta.get('repo_url')}",
+@@ -104,6 +168,26 @@ def build_user_prompt(vuln_id: str, meta: dict, files: List[tuple]) -> str:
+     return "\n".join(blocks)
+ 
+ 
++def build_repair_prompt(files: List[tuple]) -> str:
++    """Midterm USER message: vulnerable source only.
++
++    The fixed instructions (REPAIR_PROMPT) go in the system message.
++    No vulnerability ID, no repository URL, no fix commit, no tests,
++    no verification results.
++    """
++    blocks = [
++        "Vulnerable project files follow. Paths are relative to the project root;",
++        "use a/ and b/ prefixes in the diff.",
++        "",
++    ]
++    for rel, data in files:
++        blocks.append(f"--- FILE: {rel} ---")
++        blocks.append(data.rstrip("\n"))
++        blocks.append(f"--- END FILE: {rel} ---")
++        blocks.append("")
++    return "\n".join(blocks)
++
++
+ # ---------- LLM backends ----------
+ 
+ def call_claude(system: str, prompt: str, model: str) -> tuple:
+@@ -128,14 +212,103 @@ def call_claude(system: str, prompt: str, model: str) -> tuple:
+     return text, meta
+ 
+ 
++def classify_error(exc: Exception) -> str:
++    """Map a client exception to a network/HTTP error category."""
++    import openai
++    if isinstance(exc, openai.APITimeoutError):
++        return "timeout"
++    if isinstance(exc, openai.APIConnectionError):
++        cause, seen = exc, set()
++        while cause is not None and id(cause) not in seen:
++            seen.add(id(cause))
++            if isinstance(cause, socket.gaierror) or any(
++                    s in repr(cause) for s in ("Name or service not known", "getaddrinfo",
++                                               "Temporary failure in name resolution")):
++                return "dns_error"
++            cause = cause.__cause__ or cause.__context__
++        return "connection_error"
++    if isinstance(exc, openai.APIStatusError):
++        code = exc.status_code
++        return "http_5xx" if code >= 500 else f"http_{code}"
++    return type(exc).__name__
++
++
++def call_gpt_structured(system: str, user: str, model: str) -> dict:
++    """One HTTPS request to the OpenAI Chat Completions API (the same endpoint
++    used by Vul4Py's built-in connection and by the course example). No retries.
++
++    Returns a dict with the raw response, parsed fields and measurements.
++    """
++    from openai import OpenAI  # lazy
++
++    rec = {
++        "model": model,
++        "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
++        "api_success": False,
++        "http_status": None,
++        "request_id": None,
++        "server_processing_ms": None,
++        "latency_ms": None,
++        "input_tokens": None,
++        "output_tokens": None,
++        "error_type": "",
++        "error_message": "",
++        "raw": None,
++        "output_text": None,
++        "finish_reason": None,
++    }
++    if not os.environ.get("OPENAI_API_KEY"):
++        rec["error_type"] = "missing_api_key"
++        return rec
++
++    # max_retries=0: exactly one request per attempt (no hidden SDK retries).
++    client = OpenAI(timeout=API_TIMEOUT_S, max_retries=0)
++
++    start = time.perf_counter()                       # t_request
++    try:
++        raw = client.chat.completions.with_raw_response.create(
++            model=model,
++            messages=[
++                {"role": "system", "content": system},
++                {"role": "user", "content": user},
++            ],
++            response_format={"type": "json_schema",
++                             "json_schema": {"name": "repair_result",
++                                             "schema": RESPONSE_SCHEMA, "strict": True}},
++        )
++        end = time.perf_counter()                     # t_response
++        resp = raw.parse()
++        usage = getattr(resp, "usage", None)
++        rec.update(
++            api_success=True,
++            latency_ms=round((end - start) * 1000, 1),   # L_i = 1000 (t_resp - t_req)
++            http_status=getattr(raw, "status_code", 200),
++            request_id=raw.headers.get("x-request-id"),
++            server_processing_ms=raw.headers.get("openai-processing-ms"),
++            input_tokens=getattr(usage, "prompt_tokens", None),
++            output_tokens=getattr(usage, "completion_tokens", None),
++            raw=resp.model_dump(mode="json"),
++            output_text=resp.choices[0].message.content or "",
++            finish_reason=resp.choices[0].finish_reason,
++        )
++    except Exception as exc:  # noqa: BLE001
++        end = time.perf_counter()
++        rec.update(
++            latency_ms=round((end - start) * 1000, 1),
++            http_status=getattr(exc, "status_code", None),
++            error_type=classify_error(exc),
++            error_message=str(exc)[:1000],
++        )
++        body = getattr(exc, "body", None)
++        if body is not None:
++            rec["raw"] = {"error_body": body}
++    return rec
++
++
+ def call_gpt(system: str, prompt: str, model: str, temperature: float = 0.0) -> tuple:
++    """Original diff-only OpenAI call (kept for reference; not used by the midterm)."""
+     from openai import OpenAI  # lazy
+-    # Route through OpenRouter when OPENROUTER_API_KEY is set; otherwise use the
+-    # stock OpenAI endpoint. OPENAI_BASE_URL overrides the endpoint explicitly.
+-    or_key = os.environ.get("OPENROUTER_API_KEY")
+-    base_url = os.environ.get("OPENAI_BASE_URL") or ("https://openrouter.ai/api/v1" if or_key else None)
+-    api_key = or_key or os.environ.get("OPENAI_API_KEY")
+-    client = OpenAI(base_url=base_url, api_key=api_key) if base_url else OpenAI()
++    client = OpenAI()
+     t0 = time.time()
+     resp = client.chat.completions.create(
+         model=model,
+@@ -150,7 +323,7 @@ def call_gpt(system: str, prompt: str, model: str, temperature: float = 0.0) ->
+     usage = resp.usage
+     meta = {
+         "model": model,
+-        "provider": "openrouter" if base_url and "openrouter" in base_url else "openai",
++        "provider": "openai",
+         "input_tokens": getattr(usage, "prompt_tokens", None),
+         "output_tokens": getattr(usage, "completion_tokens", None),
+         "stop_reason": resp.choices[0].finish_reason,
+@@ -162,7 +335,9 @@ def call_gpt(system: str, prompt: str, model: str, temperature: float = 0.0) ->
+ # ---------- patch extraction ----------
+ 
+ def extract_diff(text: str) -> str:
+-    # If the model wrapped in ``` fences, strip them.
++    """Mechanical normalisation only: strip ``` fences, ensure final newline
++    (git apply requires it). The untouched model text stays in response_raw.json
++    and generation.json -> patch_raw."""
+     stripped = text.strip()
+     if stripped.startswith("```"):
+         lines = stripped.splitlines()
+@@ -171,13 +346,144 @@ def extract_diff(text: str) -> str:
+         if lines and lines[-1].strip() == "```":
+             lines = lines[:-1]
+         stripped = "\n".join(lines)
++    if not stripped:
++        return ""
+     return stripped + ("\n" if not stripped.endswith("\n") else "")
+ 
+ 
++def parse_structured(text: str) -> dict:
++    try:
++        return json.loads(text)
++    except json.JSONDecodeError:
++        import re
++        m = re.search(r"\{.*\}", text or "", re.S)
++        if not m:
++            raise
++        return json.loads(m.group(0))
++
++
++# ---------- freezing (task 2) ----------
++
++def sha256(path: Path) -> str:
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def is_frozen(out_dir: Path) -> bool:
++    return (out_dir / "freeze.json").exists()
++
++
++def freeze(out_dir: Path) -> dict:
++    manifest = {
++        "frozen_at": dt.datetime.now(dt.timezone.utc).isoformat(),
++        "sha256": {f: sha256(out_dir / f) for f in FROZEN_FILES},
++        "note": "Saved before any verification. Must not be modified, retried or regenerated.",
++    }
++    (out_dir / "freeze.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
++    for f in FROZEN_FILES + ["freeze.json"]:
++        os.chmod(out_dir / f, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)  # 0444
++    return manifest
++
++
++def write_json(path: Path, obj) -> None:
++    path.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
++
++
+ # ---------- driver ----------
+ 
++def run_gpt_midterm(model: str, vuln_id: str, case_dir: Path, out_dir: Path) -> int:
++    if is_frozen(out_dir):
++        print(f"[=] {vuln_id}: already frozen -> not regenerated (one attempt only).")
++        return 0
++
++    meta = load_meta(case_dir)
++    files = collect_context_files(case_dir, meta)
++    user = build_repair_prompt(files)
++
++    out_dir.mkdir(parents=True, exist_ok=True)
++    # prompt.txt = exactly what the model received (system + user messages).
++    (out_dir / "prompt.txt").write_text(
++        "=== SYSTEM ===\n" + REPAIR_PROMPT + "\n\n=== USER ===\n" + user, encoding="utf-8")
++
++    print(f"[>] {vuln_id}: {len(files)} file(s), {len(user):,} chars -> {model}")
++    rec = call_gpt_structured(REPAIR_PROMPT, user, model)
++
++    gen = {
++        "agent": "gpt",
++        "vuln_id": vuln_id,
++        "model": model,
++        "timestamp": rec["timestamp"],
++        "context_files": [r for r, _ in files],
++        "api_success": rec["api_success"],
++        "http_status": rec["http_status"],
++        "request_id": rec["request_id"],
++        "server_processing_ms": rec["server_processing_ms"],
++        "latency_ms": rec["latency_ms"],
++        "input_tokens": rec["input_tokens"],
++        "output_tokens": rec["output_tokens"],
++        "finish_reason": rec["finish_reason"],
++        "claimed_success": None,     # C_i
++        "confidence": None,          # P_i
++        "patch_raw": None,           # delta_i exactly as returned
++        "error_type": rec["error_type"],
++        "error_message": rec["error_message"],
++        "warnings": [],
++    }
++
++    if not rec["api_success"]:
++        # No model output exists -> no repair attempt was produced -> nothing frozen.
++        write_json(out_dir / "generation.json", gen)
++        if rec["raw"] is not None:
++            write_json(out_dir / "response_raw.json", rec["raw"])
++        print(f"[!] {vuln_id}: API error {gen['error_type']} (HTTP {gen['http_status']}); "
++              f"not frozen. {gen['error_message'][:120]}", file=sys.stderr)
++        return 1
++
++    write_json(out_dir / "response_raw.json", rec["raw"])
++
++    try:
++        data = parse_structured(rec["output_text"])
++        gen["claimed_success"] = bool(data["claimed_success"])
++        gen["confidence"] = float(data["confidence"])
++        gen["patch_raw"] = data["patch"]
++        if not 0.0 <= gen["confidence"] <= 1.0:
++            gen["warnings"].append("confidence outside [0,1]")
++        if not str(data["patch"]).strip():
++            gen["warnings"].append("empty patch")
++    except Exception as exc:  # noqa: BLE001
++        # The model answered, so this IS its one attempt: freeze it as a parse error.
++        gen["error_type"] = "parse_error"
++        gen["error_message"] = str(exc)[:500]
++
++    diff = extract_diff(gen["patch_raw"] or "")
++    (out_dir / "patch.diff").write_text(diff, encoding="utf-8")
++    write_json(out_dir / "generation.json", gen)
++    # llm_response.json: the model's answer exactly as the deliverable names it
++    # (claim, confidence, patch) plus the request metadata.
++    write_json(out_dir / "llm_response.json", {
++        "case_id": vuln_id,
++        "model": model,
++        "timestamp": gen["timestamp"],
++        "claimed_success": gen["claimed_success"],
++        "confidence": gen["confidence"],
++        "patch": gen["patch_raw"],
++        "latency_ms": gen["latency_ms"],
++        "input_tokens": gen["input_tokens"],
++        "output_tokens": gen["output_tokens"],
++        "error_type": gen["error_type"],
++    })
++
++    freeze(out_dir)
++    print(f"[+] {vuln_id}: claimed_success={gen['claimed_success']} confidence={gen['confidence']} "
++          f"latency={gen['latency_ms']} ms tokens={gen['input_tokens']}/{gen['output_tokens']} -> FROZEN")
++    return 0
++
++
+ def run_builtin(agent: str, model: str, vuln_id: str, case_dir: Path, out_dir: Path,
+                 temperature: float = 0.0) -> int:
++    if agent == "gpt":
++        return run_gpt_midterm(model, vuln_id, case_dir, out_dir)
++
++    # ---- original claude path (unchanged) ----
+     meta = load_meta(case_dir)
+     files = collect_context_files(case_dir, meta)
+     user = build_user_prompt(vuln_id, meta, files)
+@@ -186,10 +492,7 @@ def run_builtin(agent: str, model: str, vuln_id: str, case_dir: Path, out_dir: P
+     (out_dir / "prompt.txt").write_text(user, encoding="utf-8")
+ 
+     try:
+-        if agent == "claude":
+-            text, info = call_claude(SYSTEM_PROMPT, user, model)
+-        else:
+-            text, info = call_gpt(SYSTEM_PROMPT, user, model, temperature=temperature)
++        text, info = call_claude(SYSTEM_PROMPT, user, model)
+     except Exception as e:
+         (out_dir / "generation.json").write_text(
+             json.dumps({"agent": agent, "model": model, "error": repr(e)}, indent=2),
+@@ -230,7 +533,7 @@ def main():
+     ap.add_argument("--runs", type=Path, default=RUNS)
+     ap.add_argument("--limit", type=int, default=None, help="Cap how many vulns to process")
+     ap.add_argument("--temperature", type=float, default=0.0,
+-                    help="Sampling temperature for the gpt builtin (default 0, paper-consistent)")
++                    help="Sampling temperature for the original claude/gpt paths")
+     args = ap.parse_args()
+ 
+     model = args.model
